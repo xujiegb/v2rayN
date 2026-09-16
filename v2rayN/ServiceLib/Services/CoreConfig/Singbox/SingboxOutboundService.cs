@@ -511,37 +511,45 @@ public partial class CoreConfigSingboxService
                     }
                     break;
 
-                case nameof(ETransport.ws):
-                    transport.type = nameof(ETransport.ws);
-                    var wsPath = transportExtra.Path;
-
-                    // Parse eh and ed parameters from path using regex
-                    if (!wsPath.IsNullOrEmpty())
-                    {
-                        var edRegex = new Regex(@"[?&]ed=(\d+)");
-                        var edMatch = edRegex.Match(wsPath);
-                        if (edMatch.Success && int.TryParse(edMatch.Groups[1].Value, out var edValue))
-                        {
-                            transport.max_early_data = edValue;
-                            transport.early_data_header_name = "Sec-WebSocket-Protocol";
-
-                            wsPath = edRegex.Replace(wsPath, "");
-                            wsPath = wsPath.Replace("?&", "?");
-                            if (wsPath.EndsWith('?'))
-                            {
-                                wsPath = wsPath.TrimEnd('?');
-                            }
-                        }
-
-                        var ehRegex = new Regex(@"[?&]eh=([^&]+)");
-                        var ehMatch = ehRegex.Match(wsPath);
-                        if (ehMatch.Success)
-                        {
-                            transport.early_data_header_name = Uri.UnescapeDataString(ehMatch.Groups[1].Value);
-                        }
-                    }
-
+                case nameof(ETransport.ws):  
+                    transport.type = nameof(ETransport.ws);  
+  
+                    var wsPath = transportExtra.Path ?? string.Empty;  
+                    try { wsPath = Uri.UnescapeDataString(wsPath); } catch (FormatException) { }  
+  
+                    if (!wsPath.IsNullOrEmpty())  
+                    {  
+                        var idx = wsPath.IndexOf('?');  
+                        var basePath = idx >= 0 ? wsPath[..idx] : wsPath;  
+                        var remaining = new List<string>();  
+                        int? ed = null;  
+                        string? eh = null;  
+  
+                        foreach (var part in idx >= 0 ? wsPath[(idx + 1)..].Split('&', StringSplitOptions.RemoveEmptyEntries) : [])  
+                        {  
+                            var kv = part.Split('=', 2);  
+                            var val = kv.Length > 1 ? kv[1] : string.Empty;  
+  
+                            if (kv[0] == "ed" && int.TryParse(val, out var v)) { ed = v; continue; }  
+                            if (kv[0] == "eh" && !val.IsNullOrEmpty()) { eh = val; continue; }  
+                            remaining.Add(part);  
+                        }  
+  
+                        if (ed is not null)  
+                        {  
+                            transport.max_early_data = ed.Value;  
+                            transport.early_data_header_name = eh ?? "Sec-WebSocket-Protocol";  
+                        }  
+                        else if (eh is not null)  
+                        {  
+                            transport.early_data_header_name = eh;  
+                        }  
+  
+                        wsPath = remaining.Count > 0 ? $"{basePath}?{string.Join("&", remaining)}" : basePath;  
+                    }  
+  
                     transport.path = wsPath.NullIfEmpty();
+                    
                     if (transportExtra.Host.IsNotEmpty())
                     {
                         transport.headers = new()
